@@ -14,7 +14,7 @@ from librelyrics.exceptions import TOTPGenerationException
 logger = logging.getLogger('librelyrics.modules.spotify.totp')
 
 SECRET_CIPHER_DICT_URL = (
-    "https://github.com/xyloflake/spot-secrets-go/blob/main/secrets/secretDict.json?raw=true"
+    "https://code.thetadev.de/ThetaDev/spotify-secrets/raw/branch/main/secrets/secretDict.json"
 )
 
 
