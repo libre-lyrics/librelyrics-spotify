@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import ClassVar
+from typing import ClassVar, Optional
 
 from librelyrics.exceptions import ConfigurationError, LyricsNotFound
 from librelyrics.models import LyricsLine, LyricsResponse
@@ -46,7 +46,7 @@ class SpotifyModule(LyricsModule):
     
     def __init__(self, url: str, config: dict) -> None:
         super().__init__(url, config)
-        self._client: SpotifyClient | None = None
+        self._client: Optional[SpotifyClient] = None
     
     def _ensure_client(self) -> None:
         """Ensure Spotify client is initialized with current config."""

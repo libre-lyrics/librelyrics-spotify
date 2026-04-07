@@ -9,7 +9,7 @@ import base64
 import json
 import logging
 import re
-from typing import Any
+from typing import Any, Optional
 
 import requests
 
@@ -38,21 +38,21 @@ ALBUM_ID_PATTERN = re.compile(r'spotify\.com/album/([a-zA-Z0-9]+)')
 PLAYLIST_ID_PATTERN = re.compile(r'spotify\.com/playlist/([a-zA-Z0-9]+)')
 
 
-def extract_track_id(url: str) -> str | None:
+def extract_track_id(url: str) -> Optional[str]:
     """Extract track ID from Spotify URL."""
     if match := TRACK_ID_PATTERN.search(url):
         return match.group(1)
     return None
 
 
-def extract_album_id(url: str) -> str | None:
+def extract_album_id(url: str) -> Optional[str]:
     """Extract album ID from Spotify URL."""
     if match := ALBUM_ID_PATTERN.search(url):
         return match.group(1)
     return None
 
 
-def extract_playlist_id(url: str) -> str | None:
+def extract_playlist_id(url: str) -> Optional[str]:
     """Extract playlist ID from Spotify URL."""
     if match := PLAYLIST_ID_PATTERN.search(url):
         return match.group(1)
@@ -79,7 +79,7 @@ class SpotifyClient:
     and spclient for lyrics. No sp_dc cookie needed for public data.
     """
     
-    def __init__(self, sp_dc: str | None = None) -> None:
+    def __init__(self, sp_dc: Optional[str] = None) -> None:
         """Initialize the Spotify client.
         
         Args:
@@ -94,11 +94,11 @@ class SpotifyClient:
         if sp_dc:
             self.session.cookies.set('sp_dc', sp_dc)
         
-        self.access_token: str | None = None
-        self.client_token: str | None = None
-        self.client_id: str | None = None
-        self.device_id: str | None = None
-        self.client_version: str | None = None
+        self.access_token: Optional[str] = None
+        self.client_token: Optional[str] = None
+        self.client_id: Optional[str] = None
+        self.device_id: Optional[str] = None
+        self.client_version: Optional[str] = None
         self.totp = TOTP()
         
         self._initialize()
@@ -354,7 +354,7 @@ class SpotifyClient:
             'explicit': data.get('contentRating', {}).get('label') == 'EXPLICIT',
         }
     
-    def get_lyrics(self, track_id: str) -> dict[str, Any] | None:
+    def get_lyrics(self, track_id: str) -> Optional[dict[str, Any]]:
         """Fetch lyrics for a track.
         
         Args:
