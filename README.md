@@ -16,7 +16,10 @@ pip install librelyrics-spotify
 
 ## Configuration
 
-Requires a Spotify `sp_dc` cookie. Set it up via:
+Requires a Spotify `sp_dc` cookie. The TOTP secret dictionary URL is built in
+as the default, and you can override it in configuration if that source is
+blocked in your environment. The configured value takes priority when set.
+Set it up via:
 
 ```bash
 librelyrics config edit
@@ -26,6 +29,12 @@ Or set it directly:
 
 ```bash
 librelyrics config set plugins.Spotify.sp_dc "YOUR_SP_DC_COOKIE"
+```
+
+To override the TOTP secret source, set:
+
+```bash
+librelyrics config set plugins.Spotify.totp_secret_cipher_dict_url "https://github.com/xyloflake/spot-secrets-go/blob/main/secrets/secretDict.json?raw=true"
 ```
 
 ### Getting your `sp_dc` cookie

@@ -79,7 +79,11 @@ class SpotifyClient:
     and spclient for lyrics. No sp_dc cookie needed for public data.
     """
     
-    def __init__(self, sp_dc: str | None = None) -> None:
+    def __init__(
+        self,
+        sp_dc: str | None = None,
+        totp_secret_cipher_dict_url: str | None = None,
+    ) -> None:
         """Initialize the Spotify client.
         
         Args:
@@ -99,7 +103,7 @@ class SpotifyClient:
         self.client_id: str | None = None
         self.device_id: str | None = None
         self.client_version: str | None = None
-        self.totp = TOTP()
+        self.totp = TOTP(secret_cipher_dict_url=totp_secret_cipher_dict_url)
         
         self._initialize()
     
