@@ -15,6 +15,7 @@ from librelyrics.modules.base import (LyricsModule, LyricsType,
                                       ModuleCapability, ModuleMeta)
 from spotify.api import (SpotifyClient, extract_album_id, extract_playlist_id,
                          extract_track_id)
+from spotify import totp as spotify_totp
 
 logger = logging.getLogger('librelyrics.modules.spotify')
 
@@ -40,6 +41,9 @@ class SpotifyModule(LyricsModule):
         config_schema={
             'sp_dc': 'Spotify sp_dc cookie (see README)',
             'synced_lyrics': 'Prefer synced lyrics (true/false)',
+            'totp_secret_cipher_dict_url': (
+                'Optional override for the Spotify TOTP secret dictionary URL'
+            ),
         },
     )
     LIBRELYRICS_API_VERSION: ClassVar[int] = 1
@@ -58,7 +62,15 @@ class SpotifyModule(LyricsModule):
             )
         
         if self._client is None:
-            self._client = SpotifyClient(sp_dc)
+            totp_secret_cipher_dict_url = self.config.get(
+                'totp_secret_cipher_dict_url'
+            )
+            if totp_secret_cipher_dict_url:
+                spotify_totp.SECRET_CIPHER_DICT_URL = totp_secret_cipher_dict_url
+
+            self._client = SpotifyClient(
+                sp_dc,
+            )
             logger.debug("Initialized Spotify client")
     
     @property
@@ -74,6 +86,7 @@ class SpotifyModule(LyricsModule):
         return {
             'sp_dc': '',
             'synced_lyrics': True,
+            'totp_secret_cipher_dict_url': '',
         }
     
     @staticmethod
