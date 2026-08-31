@@ -21,7 +21,8 @@ SECRET_CIPHER_DICT_URL = (
 class TOTP:
     """TOTP generator for Spotify Web Player authentication."""
     
-    def __init__(self) -> None:
+    def __init__(self, secret_cipher_dict_url: str | None = None) -> None:
+        self.secret_cipher_dict_url = secret_cipher_dict_url or SECRET_CIPHER_DICT_URL
         self.secret, self.version = self._get_secret_version()
         self.period = 30
         self.digits = 6
@@ -61,7 +62,7 @@ class TOTP:
             TOTPGenerationException: If secret cannot be fetched.
         """
         try:
-            req = requests.get(SECRET_CIPHER_DICT_URL, timeout=10)
+            req = requests.get(self.secret_cipher_dict_url, timeout=10)
             if req.status_code != 200:
                 raise TOTPGenerationException(
                     "Failed to fetch TOTP secret and version."

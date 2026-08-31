@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "librelyrics-spotify"
-version = "1.0.2"
+version = "2.0.0"
 description = "Spotify lyrics provider plugin for LibreLyrics"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}
@@ -27,7 +27,7 @@ keywords = ["lyrics", "spotify", "lrc", "synced-lyrics", "librelyrics", "plugin"
 requires-python = ">=3.10"
 
 dependencies = [
-    "librelyrics>=1.0.0",
+    "librelyrics>=2.0.0",
     "requests>=2.28.0",
 ]
 

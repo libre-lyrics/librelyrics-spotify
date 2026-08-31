@@ -10,7 +10,7 @@ import re
 from typing import ClassVar
 
 from librelyrics.exceptions import ConfigurationError, LyricsNotFound
-from librelyrics.models import LyricsLine, LyricsResponse
+from librelyrics.models import LyricsLine, LyricsResponse, TrackQuery
 from librelyrics.modules.base import (LyricsModule, LyricsType,
                                       ModuleCapability, ModuleMeta)
 from spotify.api import (SpotifyClient, extract_album_id, extract_playlist_id,
@@ -28,8 +28,9 @@ class SpotifyModule(LyricsModule):
     """
     
     META: ClassVar[ModuleMeta] = ModuleMeta(
+        id="spotify",
         name="Spotify",
-        regex=re.compile(r"(open\.)?spotify\.com/(track|album|playlist)/"),
+        regex=re.compile(r"(?:open\.)?spotify\.com/(?:[a-zA-Z0-9-]+/)?(track|album|playlist)/"),
         requires_auth=True,
         description="Fetch lyrics from Spotify",
         lyrics_types=frozenset({LyricsType.PLAIN, LyricsType.SYNCED}),
@@ -37,6 +38,8 @@ class SpotifyModule(LyricsModule):
             ModuleCapability.SINGLE_TRACK,
             ModuleCapability.ALBUM,
             ModuleCapability.PLAYLIST,
+            ModuleCapability.RESOLVE,
+            ModuleCapability.SEARCH,
         }),
         config_schema={
             'sp_dc': 'Spotify sp_dc cookie (see README)',
@@ -46,22 +49,34 @@ class SpotifyModule(LyricsModule):
             ),
         },
     )
-    LIBRELYRICS_API_VERSION: ClassVar[int] = 1
+    LIBRELYRICS_API_VERSION: ClassVar[int] = 2
     
-    def __init__(self, url: str, config: dict) -> None:
-        super().__init__(url, config)
+    @classmethod
+    def matches(cls, query: TrackQuery) -> bool:
+        if query.url:
+            return super().matches(query)
+        return bool(query.artist and query.title)
+
+    @classmethod
+    def classify_url(cls, url: str | None) -> str | None:
+        if not url:
+            return None
+        if extract_playlist_id(url):
+            return "playlist"
+        if extract_album_id(url):
+            return "album"
+        if extract_track_id(url):
+            return "track"
+        return None
+
+    def __init__(self, query: TrackQuery, config: dict) -> None:
+        super().__init__(query, config)
         self._client: SpotifyClient | None = None
     
     def _ensure_client(self) -> None:
         """Ensure Spotify client is initialized with current config."""
-        sp_dc = self.config.get('sp_dc')
-        if not sp_dc:
-            raise ConfigurationError(
-                "Spotify plugin requires 'sp_dc' in configuration. "
-                "Run 'librelyrics --config' to set it up."
-            )
-        
         if self._client is None:
+            sp_dc = self.config.get('sp_dc')
             totp_secret_cipher_dict_url = self.config.get(
                 'totp_secret_cipher_dict_url'
             )
@@ -69,7 +84,8 @@ class SpotifyModule(LyricsModule):
                 spotify_totp.SECRET_CIPHER_DICT_URL = totp_secret_cipher_dict_url
 
             self._client = SpotifyClient(
-                sp_dc,
+                sp_dc=sp_dc or None,
+                totp_secret_cipher_dict_url=totp_secret_cipher_dict_url or None,
             )
             logger.debug("Initialized Spotify client")
     
@@ -102,8 +118,99 @@ class SpotifyModule(LyricsModule):
                 "See README for instructions on finding it."
             )
     
+    def resolve(self) -> TrackQuery:
+        """Resolve Spotify track metadata from URL."""
+        if not self.url:
+            return self.query
+        track_id = extract_track_id(self.url)
+        if not track_id:
+            return self.query
+        try:
+            track_data = self.client.get_track(track_id)
+            artists = ', '.join(a['name'] for a in track_data.get('artists', [])) or None
+            return TrackQuery(
+                url=self.url,
+                artist=self.query.artist or artists,
+                title=self.query.title or track_data.get('name'),
+                album=self.query.album or track_data.get('album', {}).get('name'),
+                duration_ms=self.query.duration_ms or track_data.get('duration_ms'),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to resolve Spotify track: {e}")
+            return self.query
+
+    def list_tracks(self) -> list[TrackQuery]:
+        """List metadata for every track in the album or playlist."""
+        if not self.url:
+            return []
+
+        album_id = extract_album_id(self.url)
+        if album_id:
+            album_data = self.client.get_album(album_id)
+            album_name = album_data.get('name')
+            tracks: list[TrackQuery] = []
+            for t in album_data.get('tracks', []):
+                t_id = t.get('id')
+                if not t_id:
+                    continue
+                artists = ', '.join(a['name'] for a in t.get('artists', [])) or None
+                tracks.append(
+                    TrackQuery(
+                        url=f"https://open.spotify.com/track/{t_id}",
+                        artist=artists,
+                        title=t.get('name'),
+                        album=album_name,
+                        duration_ms=t.get('duration_ms'),
+                    )
+                )
+            return tracks
+
+        playlist_id = extract_playlist_id(self.url)
+        if playlist_id:
+            playlist_data = self.client.get_playlist(playlist_id)
+            tracks_info = playlist_data.get('tracks', {}).get('items', [])
+            tracks = []
+            for t in tracks_info:
+                t_id = t.get('id')
+                if not t_id:
+                    continue
+                artists = ', '.join(a['name'] for a in t.get('artists', [])) or None
+                album_name = t.get('album', {}).get('name')
+                tracks.append(
+                    TrackQuery(
+                        url=f"https://open.spotify.com/track/{t_id}",
+                        artist=artists,
+                        title=t.get('name'),
+                        album=album_name,
+                        duration_ms=t.get('duration_ms'),
+                    )
+                )
+            return tracks
+
+        # Single track fallback
+        track_id = extract_track_id(self.url)
+        if track_id:
+            return [self.resolve()]
+
+        raise LyricsNotFound(f"Could not extract track, album, or playlist from URL: {self.url}")
+
+    def _search_track_id(self) -> str:
+        artist = (self.query.artist or "").strip()
+        title = (self.query.title or "").strip()
+        if not artist or not title:
+            raise LyricsNotFound("Artist and title are required to search Spotify")
+        query = f'track:"{title}" artist:"{artist}"'
+        data = self.client.search(query, search_type="track", limit=5)
+        items = (data.get("tracks") or {}).get("items") or []
+        if not items:
+            raise LyricsNotFound(f"No Spotify match for: {artist} - {title}")
+        track_id = items[0].get("id")
+        if not track_id:
+            raise LyricsNotFound(f"No Spotify match for: {artist} - {title}")
+        return track_id
+
     def fetch(self) -> LyricsResponse:
-        """Fetch lyrics for the configured URL.
+        """Fetch lyrics for the configured URL or metadata search.
         
         Returns:
             LyricsResponse with lyrics data.
@@ -111,6 +218,9 @@ class SpotifyModule(LyricsModule):
         Raises:
             LyricsNotFound: If lyrics are not available.
         """
+        if not self.url:
+            return self._fetch_track_lyrics(self._search_track_id())
+
         track_id = extract_track_id(self.url)
         
         if not track_id:
@@ -136,6 +246,11 @@ class SpotifyModule(LyricsModule):
         Raises:
             LyricsNotFound: If lyrics are not available.
         """
+        if not self.config.get('sp_dc'):
+            raise ConfigurationError(
+                "Spotify plugin requires 'sp_dc' in configuration to fetch lyrics. "
+                "Run 'librelyrics --config' to set it up."
+            )
         # Get track metadata
         track_data = self.client.get_track(track_id)
         

@@ -32,28 +32,34 @@ USER_AGENT = (
     'AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 )
 
-# Regex patterns for Spotify URLs
-TRACK_ID_PATTERN = re.compile(r'spotify\.com/track/([a-zA-Z0-9]+)')
-ALBUM_ID_PATTERN = re.compile(r'spotify\.com/album/([a-zA-Z0-9]+)')
-PLAYLIST_ID_PATTERN = re.compile(r'spotify\.com/playlist/([a-zA-Z0-9]+)')
+# Regex patterns for Spotify URLs and URIs
+TRACK_ID_PATTERN = re.compile(
+    r'(?:spotify\.com/(?:[a-zA-Z0-9-]+/)?track/|spotify:track:)([a-zA-Z0-9]+)'
+)
+ALBUM_ID_PATTERN = re.compile(
+    r'(?:spotify\.com/(?:[a-zA-Z0-9-]+/)?album/|spotify:album:)([a-zA-Z0-9]+)'
+)
+PLAYLIST_ID_PATTERN = re.compile(
+    r'(?:spotify\.com/(?:[a-zA-Z0-9-]+/)?playlist/|spotify:playlist:)([a-zA-Z0-9]+)'
+)
 
 
 def extract_track_id(url: str) -> str | None:
-    """Extract track ID from Spotify URL."""
+    """Extract track ID from Spotify URL or URI."""
     if match := TRACK_ID_PATTERN.search(url):
         return match.group(1)
     return None
 
 
 def extract_album_id(url: str) -> str | None:
-    """Extract album ID from Spotify URL."""
+    """Extract album ID from Spotify URL or URI."""
     if match := ALBUM_ID_PATTERN.search(url):
         return match.group(1)
     return None
 
 
 def extract_playlist_id(url: str) -> str | None:
-    """Extract playlist ID from Spotify URL."""
+    """Extract playlist ID from Spotify URL or URI."""
     if match := PLAYLIST_ID_PATTERN.search(url):
         return match.group(1)
     return None
@@ -592,6 +598,17 @@ class SpotifyClient:
         Returns:
             Search results.
         """
-        # For lyrics fetching we mainly need track search
-        # This is a simplified implementation
-        raise NotImplementedError("Search not implemented, use track/album/playlist URLs directly")
+        if not self.access_token:
+            self._initialize()
+        try:
+            resp = self.session.get(
+                "https://api.spotify.com/v1/search",
+                params={"q": query, "type": search_type, "limit": limit},
+                headers={"Authorization": f"Bearer {self.access_token}"},
+                timeout=10,
+            )
+            if resp.status_code != 200:
+                raise ProviderError(f"Spotify search failed: HTTP {resp.status_code}")
+            return resp.json()
+        except requests.RequestException as e:
+            raise ProviderError(f"Spotify search request failed: {e}") from e
