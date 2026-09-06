@@ -28,6 +28,7 @@ class SpotifyModule(LyricsModule):
     """
     
     META: ClassVar[ModuleMeta] = ModuleMeta(
+        id="spotify",
         name="Spotify",
         regex=re.compile(r"(open\.)?spotify\.com/(track|album|playlist)/"),
         requires_auth=True,
@@ -46,7 +47,7 @@ class SpotifyModule(LyricsModule):
             ),
         },
     )
-    LIBRELYRICS_API_VERSION: ClassVar[int] = 1
+    LIBRELYRICS_API_VERSION: ClassVar[int] = 2
     
     def __init__(self, url: str, config: dict) -> None:
         super().__init__(url, config)

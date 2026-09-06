@@ -21,8 +21,13 @@ SECRET_CIPHER_DICT_URL = (
 class TOTP:
     """TOTP generator for Spotify Web Player authentication."""
     
-    def __init__(self) -> None:
+    def __init__(self, secret_cipher_dict_url: str | None = None) -> None:
+        if secret_cipher_dict_url:
+            global SECRET_CIPHER_DICT_URL
+            SECRET_CIPHER_DICT_URL = secret_cipher_dict_url
+    
         self.secret, self.version = self._get_secret_version()
+    
         self.period = 30
         self.digits = 6
 

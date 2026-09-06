@@ -34,3 +34,12 @@ htmlcov/
 
 # mypy
 .mypy_cache/
+
+# downloaded lyrics
+downloads/
+
+# Ruff
+.ruff_cache/
+
+# Pyright
+.pyright/
