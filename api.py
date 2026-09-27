@@ -18,7 +18,9 @@ from librelyrics.exceptions import (
     LyricsNotFound,
     NotValidSp_Dc,
     ProviderError,
+    RateLimitError,
     TOTPGenerationException,
+    TransientProviderError,
 )
 from spotify.totp import TOTP
 
@@ -30,7 +32,6 @@ CLIENT_TOKEN_URL = "https://clienttoken.spotify.com/v1/clienttoken"
 PARTNER_API_URL = "https://api-partner.spotify.com/pathfinder/v2/query"
 LYRICS_URL = "https://spclient.wg.spotify.com/color-lyrics/v2/track/{}"
 SPOTIFY_HOME = "https://open.spotify.com"
-
 
 # Pagination
 PAGE_SIZE = 100
@@ -405,11 +406,22 @@ class SpotifyClient:
     def get_lyrics(self, track_id: str) -> dict[str, Any] | None:
         """Fetch lyrics for a track.
 
+        Retry and back-off are the core's job: this only classifies the response.
+        Rate limits, server errors and rejected tokens are raised so
+        ``LyricsModule.retry_call`` retries them; only 404 means "no lyrics".
+
         Args:
             track_id: Spotify track ID.
 
         Returns:
-            Lyrics JSON data, or None if not available.
+            Lyrics JSON data, or None if the track has no lyrics.
+
+        Raises:
+            RateLimitError: The endpoint asked us to slow down.
+            TransientProviderError: Server error, dropped connection, or a
+                rejected access token (the token is dropped so the retry
+                acquires a fresh one).
+            ProviderError: Any other rejected request.
         """
         if not self.access_token:
             self._get_access_token()
@@ -424,17 +436,51 @@ class SpotifyClient:
 
         try:
             resp = self.session.get(url, params=params, headers=headers, timeout=10)
+        except requests.RequestException as e:
+            raise TransientProviderError(f"Spotify lyrics request failed: {e}") from e
 
-            if resp.status_code == 200:
-                logger.debug(f"Fetched lyrics for: {track_id}")
-                return resp.json()
+        if resp.status_code == 200:
+            try:
+                payload = resp.json()
+            except ValueError as e:
+                raise TransientProviderError(
+                    f"Spotify lyrics response was not JSON: {e}"
+                ) from e
+            logger.debug(f"Fetched lyrics for: {track_id}")
+            return payload
 
+        if resp.status_code == 404:
             logger.debug(f"No lyrics available for: {track_id}")
             return None
 
-        except Exception as e:
-            logger.warning(f"Failed to fetch lyrics: {e}")
-            return None
+        if resp.status_code == 429:
+            try:
+                retry_after = float(resp.headers.get("Retry-After", ""))
+            except (TypeError, ValueError):
+                retry_after = None
+            raise RateLimitError(
+                f"Spotify lyrics throttled: HTTP 429 for {track_id}",
+                retry_after=retry_after,
+            )
+
+        if resp.status_code >= 500:
+            raise TransientProviderError(
+                f"Spotify lyrics request failed: HTTP {resp.status_code} for {track_id}"
+            )
+
+        if resp.status_code == 401:
+            # Drop the token so the retry fetches a fresh one instead of
+            # replaying the rejected request with the same credentials.
+            self.access_token = None
+            raise TransientProviderError(
+                f"Spotify lyrics request rejected the access token for {track_id}"
+            )
+
+        # Reporting these as "no lyrics" would hide a rejected request behind an
+        # empty download.
+        raise ProviderError(
+            f"Spotify lyrics request failed: HTTP {resp.status_code} for {track_id}"
+        )
 
     def get_album(self, album_id: str) -> dict[str, Any]:
         """Get album metadata, following every page of tracks.
@@ -627,6 +673,20 @@ class SpotifyClient:
                 "items": tracks,
             },
         }
+
+    def get_playlist_tracks(self, playlist_id: str) -> list[str]:
+        """Get all track IDs from a playlist.
+
+        Args:
+            playlist_id: Spotify playlist ID.
+
+        Returns:
+            List of track IDs.
+        """
+        playlist = self.get_playlist(playlist_id)
+        return [
+            t["id"] for t in playlist.get("tracks", {}).get("items", []) if t.get("id")
+        ]
 
     def search(
         self,

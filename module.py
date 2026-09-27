@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import partial
 from typing import ClassVar
 
 from librelyrics.exceptions import ConfigurationError, LyricsNotFound
@@ -40,7 +41,8 @@ class SpotifyModule(LyricsModule):
         id="spotify",
         name="Spotify",
         regex=re.compile(
-            r"(?:open\.)?spotify\.com/(?:[a-zA-Z0-9-]+/)?(track|album|playlist)/"
+            r"(?:open\.)?spotify\.com/(?:[a-zA-Z0-9-]+/)?(?:track|album|playlist)/"
+            r"|spotify:(?:track|album|playlist):"
         ),
         requires_auth=True,
         description="Fetch lyrics from Spotify",
@@ -56,7 +58,6 @@ class SpotifyModule(LyricsModule):
         ),
         config_schema={
             "sp_dc": "Spotify sp_dc cookie (see README)",
-            "synced_lyrics": "Prefer synced lyrics (true/false)",
             "totp_secret_cipher_dict_url": (
                 "Optional override for the Spotify TOTP secret dictionary URL"
             ),
@@ -112,7 +113,6 @@ class SpotifyModule(LyricsModule):
         """Return default Spotify configuration."""
         return {
             "sp_dc": "",
-            "synced_lyrics": True,
             "totp_secret_cipher_dict_url": "",
         }
 
@@ -133,38 +133,30 @@ class SpotifyModule(LyricsModule):
         """Resolve Spotify track metadata from URL."""
         if not self.url:
             return self.query
-        # Check if the URL is an album or playlist
+        # Album/playlist URLs describe a collection, not one track: there is no
+        # metadata to resolve here. list_tracks() enumerates the real tracks.
         if extract_album_id(self.url) or extract_playlist_id(self.url):
-            # For album/playlist URLs, return a TrackQuery based on the query
-            # This allows fetch() to search for tracks within the album/playlist
-            query = self.query
+            return self.query
+
+        track_id = extract_track_id(self.url)
+        if not track_id:
+            return self.query
+        try:
+            track_data = self.client.get_track(track_id)
+            artists = (
+                ", ".join(a["name"] for a in track_data.get("artists", [])) or None
+            )
             return TrackQuery(
                 url=self.url,
-                artist=query.artist or "",
-                title=query.title or "",
-                album=query.album or "",
-                duration_ms=query.duration_ms or 0,
+                artist=self.query.artist or artists,
+                title=self.query.title or track_data.get("name"),
+                album=self.query.album or track_data.get("album", {}).get("name"),
+                duration_ms=self.query.duration_ms or track_data.get("duration_ms"),
             )
-        # For track URLs, extract the track ID and return a proper TrackQuery
-        track_id = extract_track_id(self.url)
-        if track_id:
-            try:
-                track_data = self.client.get_track(track_id)
-                artists = (
-                    ", ".join(a["name"] for a in track_data.get("artists", [])) or None
-                )
-                return TrackQuery(
-                    url=self.url,
-                    artist=self.query.artist or artists,
-                    title=self.query.title or track_data.get("name"),
-                    album=self.query.album or track_data.get("album", {}).get("name"),
-                    duration_ms=self.query.duration_ms or track_data.get("duration_ms"),
-                )
-            except Exception as e:
-                logger.warning(f"Failed to resolve Spotify track: {e}")
-                return self.query
-        else:
+        except Exception as e:
+            logger.warning(f"Failed to resolve Spotify track: {e}")
             return self.query
+
     def list_tracks(self) -> list[TrackQuery]:
         """List metadata for every track in the album or playlist."""
         if not self.url:
@@ -290,9 +282,7 @@ class SpotifyModule(LyricsModule):
         # Parse lyrics
         lyrics_data = lyrics_json["lyrics"]
         sync_type = lyrics_data.get("syncType", "UNSYNCED")
-        is_synced = sync_type == "LINE_SYNCED" and self.config.get(
-            "synced_lyrics", True
-        )
+        is_synced = sync_type == "LINE_SYNCED"
 
         lines: list[LyricsLine] = []
         for line in lyrics_data.get("lines", []):
@@ -362,7 +352,9 @@ class SpotifyModule(LyricsModule):
 
         for track_id in track_ids:
             try:
-                response = self._fetch_track_lyrics(track_id)
+                # retry_call keeps rate-limit back-off in the core instead of
+                # reimplementing it per plugin.
+                response = self.retry_call(partial(self._fetch_track_lyrics, track_id))
                 results.append(response)
             except LyricsNotFound:
                 logger.warning(f"No lyrics found for track: {track_id}")

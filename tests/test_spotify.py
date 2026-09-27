@@ -5,7 +5,13 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 import pytest
 
-from librelyrics.exceptions import ConfigurationError, LyricsNotFound
+from librelyrics.exceptions import (
+    ConfigurationError,
+    LyricsNotFound,
+    ProviderError,
+    RateLimitError,
+    TransientProviderError,
+)
 from librelyrics.models import LyricsLine, TrackQuery
 from librelyrics.modules.base import (
     LIBRELYRICS_API_VERSION,
@@ -93,6 +99,26 @@ class TestSpotifyApiV2:
         )
         assert SpotifyModule.matches(query) is True
 
+    def test_matches_spotify_uri_forms(self):
+        assert (
+            SpotifyModule.matches(
+                TrackQuery(url="spotify:track:4PTG3Z6ehGkBFwjybzWkR8")
+            )
+            is True
+        )
+        assert (
+            SpotifyModule.matches(
+                TrackQuery(url="spotify:album:2S8ZSnpmlReMfteHNp3zju")
+            )
+            is True
+        )
+        assert (
+            SpotifyModule.matches(
+                TrackQuery(url="spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")
+            )
+            is True
+        )
+
     def test_does_not_match_unrelated_url(self):
         query = TrackQuery(url="https://music.apple.com/us/song/test/123")
         assert SpotifyModule.matches(query) is False
@@ -100,7 +126,7 @@ class TestSpotifyApiV2:
     def test_default_config_has_sp_dc(self):
         cfg = SpotifyModule.default_config()
         assert "sp_dc" in cfg
-        assert "synced_lyrics" in cfg
+        assert "synced_lyrics" not in cfg
 
     def test_config_schema_has_sp_dc(self):
         assert "sp_dc" in SpotifyModule.META.config_schema
@@ -284,7 +310,7 @@ def test_list_tracks_playlist() -> None:
 def test_fetch_without_url_uses_search() -> None:
     module = SpotifyModule(
         query=TrackQuery(artist="Ed Sheeran", title="Perfect"),
-        config={"sp_dc": "cookie", "synced_lyrics": True},
+        config={"sp_dc": "cookie"},
     )
     mock_client = MagicMock()
     mock_client.search.return_value = {"tracks": {"items": [{"id": "found123"}]}}
@@ -310,53 +336,78 @@ def test_fetch_without_url_uses_search() -> None:
     assert response.source == "Spotify"
 
 
-def _offline_client() -> SpotifyClient:
-    """SpotifyClient with tokens preset, so no TOTP/network handshake happens."""
-    client = SpotifyClient.__new__(SpotifyClient)
-    client.access_token = "token"
-    return client
-
-
-def _top_result(typename: str, data: dict) -> dict:
-    return {
-        "__typename": "TopResultHit",
-        "item": {"__typename": typename, "data": data},
+def test_fetch_keeps_line_sync_even_with_stale_config_key() -> None:
+    module = SpotifyModule(
+        query=TrackQuery(url="https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8"),
+        config={"sp_dc": "cookie", "synced_lyrics": False},
+    )
+    mock_client = MagicMock()
+    mock_client.get_track.return_value = {
+        "name": "Never Gonna Give You Up",
+        "artists": [{"name": "Rick Astley"}],
+        "album": {"name": "Whenever You Need Somebody", "id": "alb"},
+        "duration_ms": 213573,
+        "explicit": False,
+        "track_number": 1,
     }
+    mock_client.get_lyrics.return_value = {
+        "lyrics": {
+            "syncType": "LINE_SYNCED",
+            "lines": [{"startTimeMs": "1000", "words": "Never gonna give you up"}],
+        }
+    }
+    module._client = mock_client
+
+    response = module.fetch()
+
+    assert response.synced is True
+    assert response.lyrics[0].start_ms == 1000
 
 
 def test_search_parses_top_results_into_track_shape() -> None:
-    client = _offline_client()
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
     client.query = MagicMock(
         return_value={
             "data": {
                 "searchV2": {
                     "topResultsV2": {
                         "itemsV2": [
-                            _top_result(
-                                "AlbumResponseWrapper",
-                                {"__typename": "Album", "id": "alb1", "name": "Album"},
-                            ),
-                            _top_result(
-                                "TrackResponseWrapper",
-                                {
-                                    "__typename": "Track",
-                                    "id": "4PTG3Z6ehGkBFwjybzWkR8",
-                                    "name": "Never Gonna Give You Up",
-                                    "artists": {
-                                        "items": [
-                                            {
-                                                "uri": "spotify:artist:0gxyHStUsqpMadRV0Di1Qt",
-                                                "profile": {"name": "Rick Astley"},
-                                            }
-                                        ]
+                            {
+                                "__typename": "TopResultHit",
+                                "item": {
+                                    "__typename": "AlbumResponseWrapper",
+                                    "data": {
+                                        "__typename": "Album",
+                                        "id": "alb1",
+                                        "name": "Album",
                                     },
-                                    "albumOfTrack": {
-                                        "id": "alb2",
-                                        "name": "Whenever You Need Somebody",
-                                    },
-                                    "duration": {"totalMilliseconds": 213573},
                                 },
-                            ),
+                            },
+                            {
+                                "__typename": "TopResultHit",
+                                "item": {
+                                    "__typename": "TrackResponseWrapper",
+                                    "data": {
+                                        "__typename": "Track",
+                                        "id": "4PTG3Z6ehGkBFwjybzWkR8",
+                                        "name": "Never Gonna Give You Up",
+                                        "artists": {
+                                            "items": [
+                                                {
+                                                    "uri": "spotify:artist:0gxyHStUsqpMadRV0Di1Qt",
+                                                    "profile": {"name": "Rick Astley"},
+                                                }
+                                            ]
+                                        },
+                                        "albumOfTrack": {
+                                            "id": "alb2",
+                                            "name": "Whenever You Need Somebody",
+                                        },
+                                        "duration": {"totalMilliseconds": 213573},
+                                    },
+                                },
+                            },
                         ]
                     }
                 }
@@ -379,21 +430,36 @@ def test_search_parses_top_results_into_track_shape() -> None:
 
 
 def test_search_respects_limit_and_empty_results() -> None:
-    client = _offline_client()
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
     client.query = MagicMock(
         return_value={
             "data": {
                 "searchV2": {
                     "topResultsV2": {
                         "itemsV2": [
-                            _top_result(
-                                "TrackResponseWrapper",
-                                {"__typename": "Track", "id": "t1", "name": "One"},
-                            ),
-                            _top_result(
-                                "TrackResponseWrapper",
-                                {"__typename": "Track", "id": "t2", "name": "Two"},
-                            ),
+                            {
+                                "__typename": "TopResultHit",
+                                "item": {
+                                    "__typename": "TrackResponseWrapper",
+                                    "data": {
+                                        "__typename": "Track",
+                                        "id": "t1",
+                                        "name": "One",
+                                    },
+                                },
+                            },
+                            {
+                                "__typename": "TopResultHit",
+                                "item": {
+                                    "__typename": "TrackResponseWrapper",
+                                    "data": {
+                                        "__typename": "Track",
+                                        "id": "t2",
+                                        "name": "Two",
+                                    },
+                                },
+                            },
                         ]
                     }
                 }
@@ -406,6 +472,104 @@ def test_search_respects_limit_and_empty_results() -> None:
         return_value={"data": {"searchV2": {"topResultsV2": {"itemsV2": []}}}}
     )
     assert client.search("q") == {"tracks": {"items": [], "total": 0}}
+
+
+def test_get_lyrics_returns_none_on_404() -> None:
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
+    client.session = MagicMock()
+    client.session.get.return_value = MagicMock(status_code=404, json=MagicMock())
+
+    assert client.get_lyrics("missing123") is None
+
+
+def test_get_lyrics_raises_rate_limit_error_on_429() -> None:
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
+    client.session = MagicMock()
+    client.session.get.return_value = MagicMock(
+        status_code=429, headers={"Retry-After": "2.5"}, json=MagicMock()
+    )
+
+    with pytest.raises(RateLimitError) as excinfo:
+        client.get_lyrics("4PTG3Z6ehGkBFwjybzWkR8")
+
+    assert excinfo.value.retry_after == 2.5
+    assert client.session.get.call_count == 1
+
+
+def test_get_lyrics_raises_transient_error_on_server_error() -> None:
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
+    client.session = MagicMock()
+    client.session.get.return_value = MagicMock(
+        status_code=503, headers={}, json=MagicMock()
+    )
+
+    with pytest.raises(TransientProviderError) as excinfo:
+        client.get_lyrics("4PTG3Z6ehGkBFwjybzWkR8")
+
+    assert "503" in str(excinfo.value)
+    assert client.session.get.call_count == 1
+
+
+def test_get_lyrics_drops_rejected_access_token() -> None:
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "stale"
+    client.session = MagicMock()
+    client.session.get.return_value = MagicMock(
+        status_code=401, headers={}, json=MagicMock()
+    )
+
+    with pytest.raises(TransientProviderError):
+        client.get_lyrics("4PTG3Z6ehGkBFwjybzWkR8")
+
+    assert client.access_token is None
+
+
+def test_get_lyrics_raises_plain_error_on_bad_request() -> None:
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
+    client.session = MagicMock()
+    client.session.get.return_value = MagicMock(
+        status_code=400, headers={}, json=MagicMock()
+    )
+
+    with pytest.raises(ProviderError) as excinfo:
+        client.get_lyrics("4PTG3Z6ehGkBFwjybzWkR8")
+
+    assert not isinstance(excinfo.value, (RateLimitError, TransientProviderError))
+    assert "400" in str(excinfo.value)
+
+
+@patch("librelyrics.modules.base.time.sleep")
+def test_batch_fetch_retries_rate_limited_track(sleep: MagicMock) -> None:
+    """Back-off lives in the core; the plugin only classifies the failure."""
+    module = SpotifyModule(
+        query=TrackQuery(url="https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8"),
+        config={"sp_dc": "cookie"},
+    )
+    mock_client = MagicMock()
+    mock_client.get_track.return_value = {
+        "name": "Never Gonna Give You Up",
+        "artists": [{"name": "Rick Astley"}],
+        "album": {"name": "Whenever You Need Somebody", "id": "alb"},
+        "duration_ms": 213573,
+        "explicit": False,
+        "track_number": 1,
+    }
+    mock_client.get_lyrics.side_effect = [
+        RateLimitError("throttled", retry_after=0.0),
+        {"lyrics": {"syncType": "UNSYNCED", "lines": [{"words": "Never gonna"}]}},
+    ]
+    module._client = mock_client
+
+    results = module._fetch_multiple_tracks(["4PTG3Z6ehGkBFwjybzWkR8"])
+
+    assert len(results) == 1
+    assert results[0].title == "Never Gonna Give You Up"
+    assert mock_client.get_lyrics.call_count == 2
+    assert sleep.call_count == 1
 
 
 def test_get_album_follows_every_page() -> None:
