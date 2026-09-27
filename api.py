@@ -31,6 +31,10 @@ PARTNER_API_URL = "https://api-partner.spotify.com/pathfinder/v2/query"
 LYRICS_URL = "https://spclient.wg.spotify.com/color-lyrics/v2/track/{}"
 SPOTIFY_HOME = "https://open.spotify.com"
 
+
+# Pagination
+PAGE_SIZE = 100
+
 # User agent
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -433,7 +437,7 @@ class SpotifyClient:
             return None
 
     def get_album(self, album_id: str) -> dict[str, Any]:
-        """Get album metadata.
+        """Get album metadata, following every page of tracks.
 
         Args:
             album_id: Spotify album ID.
@@ -441,55 +445,67 @@ class SpotifyClient:
         Returns:
             Album metadata dictionary.
         """
-        result = self.query(
-            "getAlbum",
-            {
-                "uri": f"spotify:album:{album_id}",
-                "locale": "",
-                "offset": 0,
-                "limit": 300,
-            },
-            "getAlbum",
-        )
+        data: dict[str, Any] = {}
+        artists: list[dict[str, str]] = []
+        tracks: list[dict[str, Any]] = []
+        offset = 0
 
-        data = result.get("data", {}).get("albumUnion", {})
-        if not data:
-            raise LyricsNotFound(f"Album not found: {album_id}")
-
-        # Extract artists
-        artists = []
-        for item in data.get("artists", {}).get("items", []):
-            profile = item.get("profile", {})
-            if profile.get("name"):
-                artists.append({"name": profile["name"]})
-
-        # Extract tracks
-        tracks = []
-        for item in data.get("tracksV2", {}).get("items", []):
-            track = item.get("track", {})
-            if not track:
-                continue
-
-            track_uri = track.get("uri", "")
-            track_id = track_uri.split(":")[-1] if ":" in track_uri else ""
-
-            track_artists = []
-            for a in track.get("artists", {}).get("items", []):
-                if a.get("profile", {}).get("name"):
-                    track_artists.append({"name": a["profile"]["name"]})
-
-            tracks.append(
+        while True:
+            result = self.query(
+                "getAlbum",
                 {
-                    "id": track_id,
-                    "name": track.get("name", ""),
-                    "artists": track_artists,
-                    "duration_ms": int(
-                        track.get("duration", {}).get("totalMilliseconds", 0)
-                    ),
-                    "track_number": int(track.get("trackNumber", 0)),
-                    "disc_number": int(track.get("discNumber", 1)),
-                }
+                    "uri": f"spotify:album:{album_id}",
+                    "locale": "",
+                    "offset": offset,
+                    "limit": PAGE_SIZE,
+                },
+                "getAlbum",
             )
+            page = result.get("data", {}).get("albumUnion", {})
+            if not page:
+                if not data:
+                    raise LyricsNotFound(f"Album not found: {album_id}")
+                break
+
+            if not data:
+                data = page
+                for item in page.get("artists", {}).get("items", []):
+                    profile = item.get("profile", {})
+                    if profile.get("name"):
+                        artists.append({"name": profile["name"]})
+
+            items = page.get("tracksV2", {}).get("items", [])
+            for item in items:
+                track = item.get("track", {})
+                if not track:
+                    continue
+
+                track_uri = track.get("uri", "")
+                track_id = track_uri.split(":")[-1] if ":" in track_uri else ""
+
+                track_artists = []
+                for a in track.get("artists", {}).get("items", []):
+                    if a.get("profile", {}).get("name"):
+                        track_artists.append({"name": a["profile"]["name"]})
+
+                tracks.append(
+                    {
+                        "id": track_id,
+                        "name": track.get("name", ""),
+                        "artists": track_artists,
+                        "duration_ms": int(
+                            track.get("duration", {}).get("totalMilliseconds", 0)
+                        ),
+                        "track_number": int(track.get("trackNumber", 0)),
+                        "disc_number": int(track.get("discNumber", 1)),
+                    }
+                )
+
+            offset += len(items)
+            total = int(page.get("tracksV2", {}).get("totalCount", 0) or 0)
+            logger.debug("Album %s: %d/%d tracks", album_id, offset, total)
+            if not items or offset >= total:
+                break
 
         # Extract date
         date_info = data.get("date", {})
@@ -528,65 +544,78 @@ class SpotifyClient:
         Returns:
             Playlist metadata dictionary.
         """
-        result = self.query(
-            "fetchPlaylist",
-            {
-                "enableWatchFeedEntrypoint": True,
-                "uri": f"spotify:playlist:{playlist_id}",
-                "offset": 0,
-                "limit": 300,
-            },
-            "getPlaylist",
-        )
+        data: dict[str, Any] = {}
+        tracks: list[dict[str, Any]] = []
+        fetched = 0
+        total = 0
 
-        data = result.get("data", {}).get("playlistV2", {})
-        if not data:
-            raise LyricsNotFound(f"Playlist not found: {playlist_id}")
+        while True:
+            result = self.query(
+                "fetchPlaylist",
+                {
+                    "enableWatchFeedEntrypoint": True,
+                    "uri": f"spotify:playlist:{playlist_id}",
+                    "offset": fetched,
+                    "limit": PAGE_SIZE,
+                },
+                "getPlaylist",
+            )
+            page = result.get("data", {}).get("playlistV2", {})
+            if not page:
+                if not data:
+                    raise LyricsNotFound(f"Playlist not found: {playlist_id}")
+                break
 
-        # Extract owner
+            if not data:
+                data = page
+
+            content = page.get("content", {})
+            items = content.get("items", [])
+            for item in items:
+                track_data = item.get("itemV2", {}).get("data", {})
+                if not track_data:
+                    continue
+
+                track_uri = track_data.get("uri", "")
+                track_id = track_uri.split(":")[-1] if ":" in track_uri else ""
+
+                if not track_id:
+                    track_id = track_data.get("id", "")
+
+                if not track_id:
+                    continue
+
+                track_artists = []
+                for a in track_data.get("artists", {}).get("items", []):
+                    if a.get("profile", {}).get("name"):
+                        track_artists.append({"name": a["profile"]["name"]})
+
+                album_data = track_data.get("albumOfTrack", {})
+
+                tracks.append(
+                    {
+                        "id": track_id,
+                        "name": track_data.get("name", ""),
+                        "artists": track_artists,
+                        "album": {
+                            "name": album_data.get("name", ""),
+                            "id": album_data.get("uri", "").split(":")[-1]
+                            if album_data.get("uri")
+                            else "",
+                        },
+                    }
+                )
+
+            fetched += len(items)
+            total = int(content.get("totalCount", 0) or 0)
+            logger.debug("Playlist %s: %d/%d items", playlist_id, fetched, total)
+            if not items or fetched >= total:
+                break
+
         owner_data = data.get("ownerV2", {}).get("data", {})
         owner = {
             "display_name": owner_data.get("name", ""),
         }
-
-        # Extract tracks
-        tracks = []
-        content = data.get("content", {})
-        for item in content.get("items", []):
-            track_data = item.get("itemV2", {}).get("data", {})
-            if not track_data:
-                continue
-
-            track_uri = track_data.get("uri", "")
-            track_id = track_uri.split(":")[-1] if ":" in track_uri else ""
-
-            if not track_id:
-                track_id = track_data.get("id", "")
-
-            if not track_id:
-                continue
-
-            track_artists = []
-            for a in track_data.get("artists", {}).get("items", []):
-                if a.get("profile", {}).get("name"):
-                    track_artists.append({"name": a["profile"]["name"]})
-
-            # Album info
-            album_data = track_data.get("albumOfTrack", {})
-
-            tracks.append(
-                {
-                    "id": track_id,
-                    "name": track_data.get("name", ""),
-                    "artists": track_artists,
-                    "album": {
-                        "name": album_data.get("name", ""),
-                        "id": album_data.get("uri", "").split(":")[-1]
-                        if album_data.get("uri")
-                        else "",
-                    },
-                }
-            )
 
         return {
             "id": playlist_id,
@@ -594,24 +623,10 @@ class SpotifyClient:
             "description": data.get("description", ""),
             "owner": owner,
             "tracks": {
-                "total": content.get("totalCount", len(tracks)),
+                "total": total or len(tracks),
                 "items": tracks,
             },
         }
-
-    def get_playlist_tracks(self, playlist_id: str) -> list[str]:
-        """Get all track IDs from a playlist.
-
-        Args:
-            playlist_id: Spotify playlist ID.
-
-        Returns:
-            List of track IDs.
-        """
-        playlist = self.get_playlist(playlist_id)
-        return [
-            t["id"] for t in playlist.get("tracks", {}).get("items", []) if t.get("id")
-        ]
 
     def search(
         self,

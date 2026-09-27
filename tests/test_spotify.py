@@ -406,3 +406,90 @@ def test_search_respects_limit_and_empty_results() -> None:
         return_value={"data": {"searchV2": {"topResultsV2": {"itemsV2": []}}}}
     )
     assert client.search("q") == {"tracks": {"items": [], "total": 0}}
+
+
+def test_get_album_follows_every_page() -> None:
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
+
+    def album_page(offset: int) -> dict:
+        return {
+            "data": {
+                "albumUnion": {
+                    "name": "Long album",
+                    "artists": {"items": [{"profile": {"name": "Artist"}}]},
+                    "date": {"isoString": "2020-01-02T00:00:00Z"},
+                    "label": "Label",
+                    "tracksV2": {
+                        "totalCount": 3,
+                        "items": [
+                            {
+                                "track": {
+                                    "uri": f"spotify:track:t{offset + i}",
+                                    "name": f"Track {offset + i}",
+                                    "artists": {"items": []},
+                                    "duration": {"totalMilliseconds": 1000},
+                                }
+                            }
+                            for i in range(min(2, 3 - offset))
+                        ],
+                    },
+                }
+            }
+        }
+
+    client.query = MagicMock(side_effect=[album_page(0), album_page(2)])
+
+    album = client.get_album("alb1")
+
+    assert [t["id"] for t in album["tracks"]] == ["t0", "t1", "t2"]
+    assert album["name"] == "Long album"
+    assert album["artists"] == [{"name": "Artist"}]
+    assert album["release_date"] == "2020-01-02"
+    assert album["total_tracks"] == 3
+    assert client.query.call_count == 2
+    assert client.query.call_args_list[0].args[1]["offset"] == 0
+    assert client.query.call_args_list[1].args[1]["offset"] == 2
+
+
+def test_get_playlist_follows_every_page() -> None:
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
+
+    def playlist_page(offset: int) -> dict:
+        return {
+            "data": {
+                "playlistV2": {
+                    "name": "Long playlist",
+                    "description": "desc",
+                    "ownerV2": {"data": {"name": "Owner"}},
+                    "content": {
+                        "totalCount": 3,
+                        "items": [
+                            {
+                                "itemV2": {
+                                    "data": {
+                                        "uri": f"spotify:track:p{offset + i}",
+                                        "name": f"Song {offset + i}",
+                                        "artists": {"items": []},
+                                    }
+                                }
+                            }
+                            for i in range(min(2, 3 - offset))
+                        ],
+                    },
+                }
+            }
+        }
+
+    client.query = MagicMock(side_effect=[playlist_page(0), playlist_page(2)])
+
+    playlist = client.get_playlist("pl1")
+
+    assert [t["id"] for t in playlist["tracks"]["items"]] == ["p0", "p1", "p2"]
+    assert playlist["name"] == "Long playlist"
+    assert playlist["owner"] == {"display_name": "Owner"}
+    assert playlist["tracks"]["total"] == 3
+    assert client.query.call_count == 2
+    assert client.query.call_args_list[0].args[1]["offset"] == 0
+    assert client.query.call_args_list[1].args[1]["offset"] == 2
