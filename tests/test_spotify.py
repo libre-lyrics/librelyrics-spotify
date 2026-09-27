@@ -1,4 +1,5 @@
 """Tests for the Spotify plugin — API v2 compliance & functionality."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -6,10 +7,19 @@ import pytest
 
 from librelyrics.exceptions import ConfigurationError, LyricsNotFound
 from librelyrics.models import LyricsLine, TrackQuery
-from librelyrics.modules.base import LIBRELYRICS_API_VERSION, ModuleCapability, LyricsType
+from librelyrics.modules.base import (
+    LIBRELYRICS_API_VERSION,
+    ModuleCapability,
+    LyricsType,
+)
 
 from spotify.module import SpotifyModule
-from spotify.api import extract_album_id, extract_playlist_id, extract_track_id
+from spotify.api import (
+    SpotifyClient,
+    extract_album_id,
+    extract_playlist_id,
+    extract_track_id,
+)
 
 
 class TestSpotifyApiV2:
@@ -57,7 +67,10 @@ class TestSpotifyApiV2:
         assert SpotifyModule.has_capability(ModuleCapability.SEARCH)
 
     def test_matches_artist_title_without_url(self):
-        assert SpotifyModule.matches(TrackQuery(artist="Ed Sheeran", title="Perfect")) is True
+        assert (
+            SpotifyModule.matches(TrackQuery(artist="Ed Sheeran", title="Perfect"))
+            is True
+        )
 
     def test_requires_auth(self):
         assert SpotifyModule.META.requires_auth is True
@@ -75,7 +88,9 @@ class TestSpotifyApiV2:
         assert SpotifyModule.matches(query) is True
 
     def test_matches_playlist_url(self):
-        query = TrackQuery(url="https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M")
+        query = TrackQuery(
+            url="https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
+        )
         assert SpotifyModule.matches(query) is True
 
     def test_does_not_match_unrelated_url(self):
@@ -97,24 +112,61 @@ class TestSpotifyApiV2:
 
 
 def test_extract_track_id() -> None:
-    assert extract_track_id("https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8") == "4PTG3Z6ehGkBFwjybzWkR8"
-    assert extract_track_id("https://open.spotify.com/intl-ja/track/4PTG3Z6ehGkBFwjybzWkR8?si=123") == "4PTG3Z6ehGkBFwjybzWkR8"
-    assert extract_track_id("spotify:track:4PTG3Z6ehGkBFwjybzWkR8") == "4PTG3Z6ehGkBFwjybzWkR8"
-    assert extract_track_id("https://open.spotify.com/album/4PTG3Z6ehGkBFwjybzWkR8") is None
+    assert (
+        extract_track_id("https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8")
+        == "4PTG3Z6ehGkBFwjybzWkR8"
+    )
+    assert (
+        extract_track_id(
+            "https://open.spotify.com/intl-ja/track/4PTG3Z6ehGkBFwjybzWkR8?si=123"
+        )
+        == "4PTG3Z6ehGkBFwjybzWkR8"
+    )
+    assert (
+        extract_track_id("spotify:track:4PTG3Z6ehGkBFwjybzWkR8")
+        == "4PTG3Z6ehGkBFwjybzWkR8"
+    )
+    assert (
+        extract_track_id("https://open.spotify.com/album/4PTG3Z6ehGkBFwjybzWkR8")
+        is None
+    )
     assert extract_track_id("invalid") is None
 
 
 def test_extract_album_id() -> None:
-    assert extract_album_id("https://open.spotify.com/album/6akEvsycV25SeWFetPf5Zu") == "6akEvsycV25SeWFetPf5Zu"
-    assert extract_album_id("https://open.spotify.com/intl-de/album/6akEvsycV25SeWFetPf5Zu?si=xyz") == "6akEvsycV25SeWFetPf5Zu"
-    assert extract_album_id("spotify:album:6akEvsycV25SeWFetPf5Zu") == "6akEvsycV25SeWFetPf5Zu"
-    assert extract_album_id("https://open.spotify.com/track/6akEvsycV25SeWFetPf5Zu") is None
+    assert (
+        extract_album_id("https://open.spotify.com/album/6akEvsycV25SeWFetPf5Zu")
+        == "6akEvsycV25SeWFetPf5Zu"
+    )
+    assert (
+        extract_album_id(
+            "https://open.spotify.com/intl-de/album/6akEvsycV25SeWFetPf5Zu?si=xyz"
+        )
+        == "6akEvsycV25SeWFetPf5Zu"
+    )
+    assert (
+        extract_album_id("spotify:album:6akEvsycV25SeWFetPf5Zu")
+        == "6akEvsycV25SeWFetPf5Zu"
+    )
+    assert (
+        extract_album_id("https://open.spotify.com/track/6akEvsycV25SeWFetPf5Zu")
+        is None
+    )
 
 
 def test_extract_playlist_id() -> None:
-    assert extract_playlist_id("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M") == "37i9dQZF1DXcBWIGoYBM5M"
-    assert extract_playlist_id("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M") == "37i9dQZF1DXcBWIGoYBM5M"
-    assert extract_playlist_id("https://open.spotify.com/track/37i9dQZF1DXcBWIGoYBM5M") is None
+    assert (
+        extract_playlist_id("https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M")
+        == "37i9dQZF1DXcBWIGoYBM5M"
+    )
+    assert (
+        extract_playlist_id("spotify:playlist:37i9dQZF1DXcBWIGoYBM5M")
+        == "37i9dQZF1DXcBWIGoYBM5M"
+    )
+    assert (
+        extract_playlist_id("https://open.spotify.com/track/37i9dQZF1DXcBWIGoYBM5M")
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -132,23 +184,30 @@ def test_validate_config_valid_sp_dc() -> None:
 
 
 def test_fetch_raises_without_sp_dc() -> None:
-    module = SpotifyModule(query=TrackQuery(url="https://open.spotify.com/track/123"), config={})
+    module = SpotifyModule(
+        query=TrackQuery(url="https://open.spotify.com/track/123"), config={}
+    )
     with pytest.raises(ConfigurationError):
         module._fetch_track_lyrics("123")
 
 
 def test_totp_init_accepts_custom_url() -> None:
     from spotify.totp import TOTP
+
     with patch("spotify.totp.requests.get") as mock_get:
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {"v1": [0, 1, 2]}
         totp = TOTP(secret_cipher_dict_url="https://example.com/custom_secret.json")
         assert totp.secret_cipher_dict_url == "https://example.com/custom_secret.json"
-        mock_get.assert_called_once_with("https://example.com/custom_secret.json", timeout=10)
+        mock_get.assert_called_once_with(
+            "https://example.com/custom_secret.json", timeout=10
+        )
 
 
 def test_resolve_track() -> None:
-    module = SpotifyModule(query=TrackQuery(url="https://open.spotify.com/track/123"), config={})
+    module = SpotifyModule(
+        query=TrackQuery(url="https://open.spotify.com/track/123"), config={}
+    )
     mock_client = MagicMock()
     mock_client.get_track.return_value = {
         "name": "Test Track",
@@ -165,13 +224,25 @@ def test_resolve_track() -> None:
 
 
 def test_list_tracks_album() -> None:
-    module = SpotifyModule(query=TrackQuery(url="https://open.spotify.com/album/456"), config={})
+    module = SpotifyModule(
+        query=TrackQuery(url="https://open.spotify.com/album/456"), config={}
+    )
     mock_client = MagicMock()
     mock_client.get_album.return_value = {
         "name": "Album Name",
         "tracks": [
-            {"id": "t1", "name": "Song 1", "artists": [{"name": "Artist 1"}], "duration_ms": 120000},
-            {"id": "t2", "name": "Song 2", "artists": [{"name": "Artist 2"}], "duration_ms": 130000},
+            {
+                "id": "t1",
+                "name": "Song 1",
+                "artists": [{"name": "Artist 1"}],
+                "duration_ms": 120000,
+            },
+            {
+                "id": "t2",
+                "name": "Song 2",
+                "artists": [{"name": "Artist 2"}],
+                "duration_ms": 130000,
+            },
         ],
     }
     module._client = mock_client
@@ -185,13 +256,21 @@ def test_list_tracks_album() -> None:
 
 
 def test_list_tracks_playlist() -> None:
-    module = SpotifyModule(query=TrackQuery(url="https://open.spotify.com/playlist/789"), config={})
+    module = SpotifyModule(
+        query=TrackQuery(url="https://open.spotify.com/playlist/789"), config={}
+    )
     mock_client = MagicMock()
     mock_client.get_playlist.return_value = {
         "name": "Playlist Name",
         "tracks": {
             "items": [
-                {"id": "p1", "name": "Play Song 1", "artists": [{"name": "Artist A"}], "album": {"name": "Alb A"}, "duration_ms": 100000}
+                {
+                    "id": "p1",
+                    "name": "Play Song 1",
+                    "artists": [{"name": "Artist A"}],
+                    "album": {"name": "Alb A"},
+                    "duration_ms": 100000,
+                }
             ]
         },
     }
@@ -231,3 +310,99 @@ def test_fetch_without_url_uses_search() -> None:
     assert response.source == "Spotify"
 
 
+def _offline_client() -> SpotifyClient:
+    """SpotifyClient with tokens preset, so no TOTP/network handshake happens."""
+    client = SpotifyClient.__new__(SpotifyClient)
+    client.access_token = "token"
+    return client
+
+
+def _top_result(typename: str, data: dict) -> dict:
+    return {
+        "__typename": "TopResultHit",
+        "item": {"__typename": typename, "data": data},
+    }
+
+
+def test_search_parses_top_results_into_track_shape() -> None:
+    client = _offline_client()
+    client.query = MagicMock(
+        return_value={
+            "data": {
+                "searchV2": {
+                    "topResultsV2": {
+                        "itemsV2": [
+                            _top_result(
+                                "AlbumResponseWrapper",
+                                {"__typename": "Album", "id": "alb1", "name": "Album"},
+                            ),
+                            _top_result(
+                                "TrackResponseWrapper",
+                                {
+                                    "__typename": "Track",
+                                    "id": "4PTG3Z6ehGkBFwjybzWkR8",
+                                    "name": "Never Gonna Give You Up",
+                                    "artists": {
+                                        "items": [
+                                            {
+                                                "uri": "spotify:artist:0gxyHStUsqpMadRV0Di1Qt",
+                                                "profile": {"name": "Rick Astley"},
+                                            }
+                                        ]
+                                    },
+                                    "albumOfTrack": {
+                                        "id": "alb2",
+                                        "name": "Whenever You Need Somebody",
+                                    },
+                                    "duration": {"totalMilliseconds": 213573},
+                                },
+                            ),
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    result = client.search('track:"Never Gonna Give You Up" artist:"Rick Astley"')
+
+    assert client.query.call_args.args[0] == "searchSuggestions"
+    assert client.query.call_args.args[2] == "searchSuggestions"
+    tracks = result["tracks"]["items"]
+    assert [t["id"] for t in tracks] == ["4PTG3Z6ehGkBFwjybzWkR8"]
+    assert tracks[0]["name"] == "Never Gonna Give You Up"
+    assert tracks[0]["artists"] == [
+        {"id": "0gxyHStUsqpMadRV0Di1Qt", "name": "Rick Astley"}
+    ]
+    assert tracks[0]["album"] == {"id": "alb2", "name": "Whenever You Need Somebody"}
+    assert tracks[0]["duration_ms"] == 213573
+
+
+def test_search_respects_limit_and_empty_results() -> None:
+    client = _offline_client()
+    client.query = MagicMock(
+        return_value={
+            "data": {
+                "searchV2": {
+                    "topResultsV2": {
+                        "itemsV2": [
+                            _top_result(
+                                "TrackResponseWrapper",
+                                {"__typename": "Track", "id": "t1", "name": "One"},
+                            ),
+                            _top_result(
+                                "TrackResponseWrapper",
+                                {"__typename": "Track", "id": "t2", "name": "Two"},
+                            ),
+                        ]
+                    }
+                }
+            }
+        }
+    )
+    assert [t["id"] for t in client.search("q", limit=1)["tracks"]["items"]] == ["t1"]
+
+    client.query = MagicMock(
+        return_value={"data": {"searchV2": {"topResultsV2": {"itemsV2": []}}}}
+    )
+    assert client.search("q") == {"tracks": {"items": [], "total": 0}}
